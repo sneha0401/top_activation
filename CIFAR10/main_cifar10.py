@@ -15,6 +15,9 @@ import argparse
 
 from models import *
 from utils import progress_bar
+
+import pytorchfi
+from pytorchfi.core import fault_injection as pfi_core
 #from Opt import opt
 #from diffGrad import diffGrad
 #from diffRGrad import diffRGrad, SdiffRGrad, BetaDiffRGrad, Beta12DiffRGrad, BetaDFCDiffRGrad
@@ -80,13 +83,34 @@ optimizer = optim.Adam(net.parameters(), lr=args.lr); optimizer1 = 'Adam'
 #optimizer = diffGrad(net.parameters(), lr=args.lr); optimizer1 = 'diffGrad'
 #optimizer = Radam(net.parameters(), lr=args.lr); optimizer1 = 'Radam'
 
+# [print(i.shape) for i in net.parameters()]
+# exit(0)
+layer_i = [11]
+# layer_i = list(range(15))
+k = [1]
+c_i = [2]
+h_i = [0]
+w_i = [0]
+inj_value_i = [-1.0]
+
+inj_net_obj = pfi_core(
+    net,
+    batch_size = 256,
+    input_shape=[3, 32, 32],
+    layer_types=[torch.nn.Conv2d, torch.nn.Linear]
+) 
+
+inj_net = inj_net_obj.declare_weight_fi(
+    layer_num=layer_i, k=k, dim1=c_i, dim2=h_i, dim3=w_i, value=inj_value_i
+)
+
 
 if args.resume:
     # Load checkpoint.
     print('==> Resuming from checkpoint..')
     assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
     checkpoint = torch.load('./checkpoint/CIFAR10_B'+str(bs)+'_LR'+lr+'_'+net1+'_'+optimizer1+'.t7')
-    net.load_state_dict(checkpoint['net'])
+    inj_net.load_state_dict(checkpoint['inj_net'])
     best_acc = checkpoint['acc']
     start_epoch = checkpoint['epoch']
 
@@ -95,14 +119,14 @@ f = open('./Results/CIFAR10_B'+str(bs)+'_LR'+lr+'_'+net1+'_'+optimizer1+'.txt', 
 # Training
 def train(epoch):
     print('\nEpoch: %d' % epoch)
-    net.train()
+    inj_net.train()
     train_loss = 0
     correct = 0
     total = 0
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(device), targets.to(device)
         optimizer.zero_grad()
-        outputs = net(inputs)
+        outputs = inj_net(inputs)
         loss = criterion(outputs, targets)
         loss.backward()
         optimizer.step()
@@ -121,14 +145,14 @@ def train(epoch):
 
 def test(epoch):
     global best_acc
-    net.eval()
+    inj_net.eval()
     test_loss = 0
     correct = 0
     total = 0
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(testloader):
             inputs, targets = inputs.to(device), targets.to(device)
-            outputs = net(inputs)
+            outputs = inj_net(inputs)
             loss = criterion(outputs, targets)
 
             test_loss += loss.item()
@@ -146,7 +170,7 @@ def test(epoch):
     if acc > best_acc:
         print('Saving..')
         state = {
-            'net': net.state_dict(),
+            'inj_net': inj_net.state_dict(),
             'acc': acc,
             'epoch': epoch,
         }
@@ -169,13 +193,3 @@ f.write('Best Accuracy:  %.3f\n'
 f.close()
 
 print("Best Accuracy: ", best_acc)
-
-
-
-
-
-
-
-
-
-

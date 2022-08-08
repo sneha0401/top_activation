@@ -102,12 +102,12 @@ from .PDELU_ResNet import *
 from .PDELU_SENet import *
 from .PDELU_MobileNet import *
 from .PDELU_DenseNet import *
-from .PAU_VGG import *
-from .PAU_GoogLeNet import *
-from .PAU_ResNet import *
-from .PAU_SENet import *
-from .PAU_MobileNet import *
-from .PAU_DenseNet import *
+# from .PAU_VGG import *
+# from .PAU_GoogLeNet import *
+# from .PAU_ResNet import *
+# from .PAU_SENet import *
+# from .PAU_MobileNet import *
+# from .PAU_DenseNet import *
 from .CELU_VGG import *
 from .CELU_GoogLeNet import *
 from .CELU_ResNet import *
