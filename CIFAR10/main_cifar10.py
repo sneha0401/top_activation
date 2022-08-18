@@ -18,6 +18,8 @@ from utils import progress_bar
 
 import pytorchfi
 from pytorchfi.core import fault_injection as pfi_core
+# from pytorchfi.weight_error_models import random_weight_inj, single_bit_flip_func
+from pytorchfi.neuron_error_models import single_bit_flip_func, random_neuron_single_bit_inj_batched
 #from Opt import opt
 #from diffGrad import diffGrad
 #from diffRGrad import diffRGrad, SdiffRGrad, BetaDiffRGrad, Beta12DiffRGrad, BetaDFCDiffRGrad
@@ -29,9 +31,8 @@ from pytorchfi.core import fault_injection as pfi_core
 #from SRADAM import SRADAM
 
 
-
-
-
+min_inj =100
+max_inj =1000
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.001, type=float, help='learning rate'); lr = '001'
@@ -82,35 +83,26 @@ optimizer = optim.Adam(net.parameters(), lr=args.lr); optimizer1 = 'Adam'
 #optimizer = optim.Adam(net.parameters(), lr=args.lr, amsgrad=True); optimizer1 = 'amsgrad'
 #optimizer = diffGrad(net.parameters(), lr=args.lr); optimizer1 = 'diffGrad'
 #optimizer = Radam(net.parameters(), lr=args.lr); optimizer1 = 'Radam'
-
+scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[80], gamma=0.1, last_epoch=-1)
 # [print(i.shape) for i in net.parameters()]
 # exit(0)
-layer_i = [11]
-# layer_i = list(range(15))
-k = [1]
-c_i = [2]
-h_i = [0]
-w_i = [0]
-inj_value_i = [-1.0]
+num = 0
+for i in net.modules():
+  if isinstance(i, torch.nn.Conv2d):
+  # if i.__class__.__name__ == "Conv2D":
+    num += 1
 
-inj_net_obj = pfi_core(
-    net,
-    batch_size = 256,
-    input_shape=[3, 32, 32],
-    layer_types=[torch.nn.Conv2d, torch.nn.Linear]
-) 
-
-inj_net = inj_net_obj.declare_weight_fi(
-    layer_num=layer_i, k=k, dim1=c_i, dim2=h_i, dim3=w_i, value=inj_value_i
-)
-
+# layer_ranges =  [24.375, 26.375, 13.179688, 3.367188, 3.314453]
+layer_ranges = [13.179688 for i in range(num)]
+inj_net_obj = single_bit_flip_func(net, bs, input_shape=[3, 32, 32], use_cuda=True, bits=8,) 
+inj_net = random_neuron_single_bit_inj_batched(inj_net_obj, layer_ranges = layer_ranges)
 
 if args.resume:
     # Load checkpoint.
     print('==> Resuming from checkpoint..')
     assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
     checkpoint = torch.load('./checkpoint/CIFAR10_B'+str(bs)+'_LR'+lr+'_'+net1+'_'+optimizer1+'.t7')
-    inj_net.load_state_dict(checkpoint['inj_net'])
+    net.load_state_dict(checkpoint['inj_net'])
     best_acc = checkpoint['acc']
     start_epoch = checkpoint['epoch']
 
@@ -119,7 +111,39 @@ f = open('./Results/CIFAR10_B'+str(bs)+'_LR'+lr+'_'+net1+'_'+optimizer1+'.txt', 
 # Training
 def train(epoch):
     print('\nEpoch: %d' % epoch)
+    net.train()
+    train_loss = 0
+    correct = 0
+    total = 0
+    for batch_idx, (inputs, targets) in enumerate(trainloader):
+        inputs, targets = inputs.to(device), targets.to(device)
+        optimizer.zero_grad()
+        outputs = net(inputs)
+        loss = criterion(outputs, targets)
+        loss.backward()
+        optimizer.step()
+
+        train_loss += loss.item()
+        _, predicted = outputs.max(1)
+        total += targets.size(0)
+        correct += predicted.eq(targets).sum().item()
+
+        progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
+                     % (train_loss / (batch_idx + 1), 100. * correct / total, correct, total))
+        if (batch_idx + 1) == len(trainloader):
+            f.write('Train | Epoch: %d | Loss: %.3f | Acc: %.3f\n'
+                % (epoch, train_loss / (batch_idx + 1), 100. * correct / total))
+
+def pfi_train(epoch, inj_net):
+    print('\nEpoch: %d' % epoch)
+    inj_net_obj = single_bit_flip_func(net, bs, input_shape=[3, 32, 32], use_cuda=True, bits=8,) 
+    inj_net = random_neuron_single_bit_inj_batched(inj_net_obj, layer_ranges = layer_ranges)
+    optimizer = optim.Adam(net.parameters(), lr=args.lr); optimizer1 = 'Adam'
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[80], gamma=0.1, last_epoch=-1)
     inj_net.train()
+    for _ in range(epoch):
+      scheduler.step()
+    criterion = nn.CrossEntropyLoss()
     train_loss = 0
     correct = 0
     total = 0
@@ -142,9 +166,10 @@ def train(epoch):
             f.write('Train | Epoch: %d | Loss: %.3f | Acc: %.3f\n'
                 % (epoch, train_loss / (batch_idx + 1), 100. * correct / total))
 
-
-def test(epoch):
+def test(epoch, inj_net):
     global best_acc
+    inj_net_obj = single_bit_flip_func(net, bs, input_shape=[3, 32, 32], use_cuda=True, bits=8,) 
+    inj_net = random_neuron_single_bit_inj_batched(inj_net_obj, layer_ranges = layer_ranges)
     inj_net.eval()
     test_loss = 0
     correct = 0
@@ -179,14 +204,16 @@ def test(epoch):
         torch.save(state, './checkpoint/CIFAR10_B'+str(bs)+'_LR'+lr+'_'+net1+'_'+optimizer1+'.t7')
         best_acc = acc
 
-scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[80], gamma=0.1, last_epoch=-1)
 #scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100,150,180], gamma=0.1, last_epoch=-1)
 
-for epoch in range(start_epoch, 100):
+for epoch in range(100):
 #for epoch in range(start_epoch, 200):
     scheduler.step()
-    train(epoch)
-    test(epoch)
+    if epoch <2:
+      train(epoch)
+    else:
+      pfi_train(epoch, inj_net)
+    test(epoch, inj_net)
 
 f.write('Best Accuracy:  %.3f\n'
     % (best_acc))
