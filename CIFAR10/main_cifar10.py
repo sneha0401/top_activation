@@ -17,7 +17,7 @@ from models import *
 from utils import progress_bar
 
 import pytorchfi
-from pytorchfi.core import fault_injection as pfi_core
+# from pytorchfi.core import fault_injection as pfi_core
 # from pytorchfi.weight_error_models import random_weight_inj, single_bit_flip_func
 from pytorchfi.neuron_error_models import single_bit_flip_func, random_neuron_single_bit_inj_batched
 #from Opt import opt
@@ -30,12 +30,10 @@ from pytorchfi.neuron_error_models import single_bit_flip_func, random_neuron_si
 #from SdiffGrad import SdiffGrad
 #from SRADAM import SRADAM
 
-
-min_inj =100
-max_inj =1000
-
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.001, type=float, help='learning rate'); lr = '001'
+parser.add_argument('--af', default = 'ReLU', help = 'activation_function')
+parser.add_argument('--net', default = 'ResNet50', help = 'network')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
 args = parser.parse_args()
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -54,7 +52,7 @@ transform_test = transforms.Compose([
     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
 ])
 
-bs = 128 #set batch size
+bs = 100 #set batch size
 trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=bs, shuffle=True, num_workers=2)
 testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
@@ -67,8 +65,13 @@ print('==> Building model..')
 #net = GELU_MobileNet(); net1 = 'GELU_MobileNet'
 #net = GELU_SENet18(); net1 = 'GELU_SENet18'
 #net = PDELU_ResNet50(); net1 = 'PDELU_ResNet50'
-net = Sigmoid_GoogLeNet(); net1 = 'Sigmoid_GoogLeNet'
+# net = Sigmoid_GoogLeNet(); net1 = 'Sigmoid_GoogLeNet'
 #net = GELU_DenseNet121(); net1 = 'GELU_DenseNet121'
+network_name = args.af + "_"+args.net+"()"
+net1 = args.af + "_"+args.net
+print(network_name)
+net = eval(network_name)
+
 net = net.to(device)
 if device == 'cuda':
     net = torch.nn.DataParallel(net)
