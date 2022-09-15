@@ -88,7 +88,7 @@ criterion = nn.CrossEntropyLoss()
 #optimizer = optim.Adagrad(net.parameters()); optimizer1 = 'AdaGrad'
 #optimizer = optim.Adadelta(net.parameters()); optimizer1 = 'AdaDelta'
 #optimizer = optim.RMSprop(net.parameters()); optimizer1 = 'RMSprop'
-optimizer = optim.Adam(net.parameters(), lr=args.lr); optimizer1 = 'Adam'
+optimizer_net = optim.Adam(net.parameters(), lr=args.lr); optimizer1 = 'Adam'
 #optimizer = optim.Adam(net.parameters(), lr=args.lr, amsgrad=True); optimizer1 = 'amsgrad'
 #optimizer = diffGrad(net.parameters(), lr=args.lr); optimizer1 = 'diffGrad'
 #optimizer = Radam(net.parameters(), lr=args.lr); optimizer1 = 'Radam'
@@ -136,9 +136,13 @@ if args.resume:
 
 f = open('./Results/CIFAR10_B'+str(bs)+'_LR'+lr+'_'+net1+'_'+'.txt', 'w')
 
+net_acc = []
+pfi_acc = []
+net_top2diff = []
+pfi_top2diff = []
 # Training
 def train(epoch):
-    print('\nEpoch: %d' % epoch)
+    print('\nTrain Epoch: %d' % epoch)
     net.train()
     train_loss = 0
     correct = 0
@@ -146,11 +150,11 @@ def train(epoch):
     top2diff_sum , td_num = 0,0
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(device), targets.to(device)
-        optimizer.zero_grad()
+        optimizer_net.zero_grad()
         outputs = net(inputs)
         loss = criterion(outputs, targets)
         loss.backward()
-        optimizer.step()
+        optimizer_net.step()
 
         train_loss += loss.item()
         _, predicted = outputs.max(1)
@@ -167,15 +171,21 @@ def train(epoch):
                 top2diff_sum += (sort_out[0].item() - sort_out[1].item())
                 td_num +=1
         # exit()
-
+        if td_num == 0:
+            Top2Diff = 0
+        else:
+            Top2Diff = top2diff_sum/td_num
         progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d) | Top2Diff: %.3f'
-                     % (train_loss / (batch_idx + 1), 100. * correct / total, correct, total, top2diff_sum/td_num))
+                     % (train_loss / (batch_idx + 1), 100. * correct / total, correct, total, Top2Diff))
         if (batch_idx + 1) == len(trainloader):
             f.write('Train | Epoch: %d | Loss: %.3f | Acc: %.3f\n'
                 % (epoch, train_loss / (batch_idx + 1), 100. * correct / total))
+    net_acc.append(correct / total)
+    net_top2diff.append(Top2Diff)
+    return train_loss / (batch_idx + 1)
 
 def pfi_train(epoch, inj_net, optimizer):
-    print('\nEpoch: %d' % epoch)
+    print('\nPFI Epoch: %d' % epoch)
     # layer_ranges = get_layer_ranges(net, trainloader)
     # inj_net_obj = pfi_core(net, bs, input_shape=[3, 32, 32], use_cuda=True,)
 #     inj_net = random_weight_inj(inj_net_obj, min_val=cust_min, max_val=cust_max)
@@ -200,6 +210,7 @@ def pfi_train(epoch, inj_net, optimizer):
     train_loss = 0
     correct = 0
     total = 0
+    t2d = 0
     top2diff_sum , td_num = 0,0
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         # if batch_idx%reset_layer_range == 0:
@@ -222,13 +233,22 @@ def pfi_train(epoch, inj_net, optimizer):
                 top2diff_sum += (sort_out[0].item() - sort_out[1].item())
                 td_num +=1
 
+        if td_num == 0:
+            Top2Diff = 0
+        else:
+            Top2Diff = top2diff_sum/td_num
+        t2d += Top2Diff
         progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d) | Top2Diff: %.3f'
-                     % (train_loss / (batch_idx + 1), 100. * correct / total, correct, total, top2diff_sum/td_num))
+                     % (train_loss / (batch_idx + 1), 100. * correct / total, correct, total, Top2Diff))
+
         if (batch_idx + 1) == len(trainloader):
             f.write('Train | Epoch: %d | Loss: %.3f | Acc: %.3f\n'
                 % (epoch, train_loss / (batch_idx + 1), 100. * correct / total))
-#     return optimizer
+    pfi_acc.append(correct / total)
+    pfi_top2diff.append(Top2Diff)
+    return train_loss / (batch_idx + 1)
 
+test_acc = []
 def test(epoch, inj_net):
     global best_acc
     # layer_ranges = get_layer_ranges(net, trainloader)
@@ -268,13 +288,18 @@ def test(epoch, inj_net):
                     top2diff_sum += (sort_out[0].item() - sort_out[1].item())
                     td_num +=1
 
+            if td_num == 0:
+                Top2Diff = 0
+            else:
+                Top2Diff = top2diff_sum/td_num
             progress_bar(batch_idx, len(testloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d) | Top2Diff: %.3f'
-                         % (test_loss / (batch_idx + 1), 100. * correct / total, correct, total, top2diff_sum/td_num))
+                        % (test_loss / (batch_idx + 1), 100. * correct / total, correct, total, Top2Diff))
             if (batch_idx + 1) == len(testloader):
                 f.write('Test | Epoch: %d | Loss: %.3f | Acc: %.3f\n'
                     % (epoch, test_loss / (batch_idx + 1), 100. * correct / total))
     # Save checkpoint.
     acc = 100. * correct / total
+    test_acc.append(acc)
     if acc > best_acc:
         print('Saving..')
         state = {
@@ -289,6 +314,7 @@ def test(epoch, inj_net):
 
 #scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100,150,180], gamma=0.1, last_epoch=-1)
 error_inj_freq = 1
+del_loss = []
 for epoch in range(100):
 #for epoch in range(start_epoch, 200):
 #     scheduler.step()
@@ -303,11 +329,17 @@ for epoch in range(100):
           inj_net_obj = pfi_core(inj_net, bs, input_shape=[3, 32, 32], use_cuda=True,)
           inj_net = random_weight_inj(inj_net_obj, min_val=cust_min, max_val=cust_max)
           optimizer = optim.Adam(inj_net.parameters(), lr=args.lr) 
-      pfi_train(epoch, inj_net, optimizer)
+      inj_net_loss = pfi_train(epoch, inj_net, optimizer)
       test(epoch, inj_net)
+      norm_net_loss = train(epoch)
+      print(norm_net_loss - inj_net_loss)
+      del_loss.append(norm_net_loss - inj_net_loss)
+      
 
 f.write('Best Accuracy:  %.3f\n'
     % (best_acc))
 f.close()
 
 print("Best Accuracy: ", best_acc)
+
+print(net_acc,"\n", net_top2diff, "\n", pfi_acc, "\n", pfi_top2diff, "\n", test_acc, "\n", del_loss)
